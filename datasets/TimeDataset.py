@@ -71,6 +71,143 @@ class TimeDataset(Dataset):
         label = self.labels[idx].double()
 
         return feature, y, label, edge_index
+    
+
+class Dataset_vitaldb(Dataset):
+    def __init__(self, data_path, win_size, step, mode="train"):
+        # 여기서 엣지 만들고 
+        # 데이터 만들기
+            # 레이블 어떻게 줄지 생각해야함 
+        self.mode = mode
+        self.step = step
+        self.win_size = win_size
+        self.data_path = data_path
+        self.__read_data__()
+
+    def __read_data__(self):
+        import sys
+        import yaml
+        from random import randint
+        sys.path.append('/home/mjh319/workspace/3_hypotension_detection/3_hypo')
+        sys.path.append('/home/mjh319/workspace/3_hypotension_detection/3_hypo/models')
+        from datasets.dataset import Make_hypo_dataset
+
+        config_path = '/home/mjh319/workspace/_hypo/4_hypo/config/0916_time.yml'
+        opt = yaml.load(open(config_path), Loader=yaml.FullLoader)
+        # opt.update(vars(self.args))
+
+        dfcases = pd.read_csv("https://api.vitaldb.net/cases")
+
+        opt['invasive'] = True
+        opt['multi'] = True
+        opt['pred_lag'] = 300
+        opt['features'] = 'none'
+
+        # random_key = randint(0, 100000)
+        random_key = 777
+
+        loader = Make_hypo_dataset(opt, random_key,dfcases)
+        self.dataset_list_train = loader["train"].dataset.dataset_list_
+        self.transform_train = loader["train"].dataset.transform
+        self.dataset_list_test = loader["test"].dataset.dataset_list_
+        self.transform_test = loader["test"].dataset.transform
+        self.dataset_list_val = loader["valid"].dataset.dataset_list_
+        self.transform_val = loader["valid"].dataset.transform
+        self.feature_keys = loader["train"].dataset.feature_keys
+
+        downsample_factor = 30  # 예시로 10개의 데이터 포인트를 평균화하여 다운샘플링
+        
+
+        for key in self.feature_keys:
+            tp = self.dataset_list_train[key]
+            downsampled_time_series = []
+            targets = [] 
+            # 각 시계열에서 다운샘플링 진행
+            for i in range(tp.shape[0]):  # 시계열 개수에 대해 루프를 돕니다.
+                downsampled_segment = np.mean(tp[i].reshape(-1, downsample_factor), axis=1)
+                if self.dataset_list_train['target'][i] == 0:
+                    downsampled_time_series.append(downsampled_segment)
+                    targets.append(self.dataset_list_train['target'][i] )
+
+            # 리스트를 넘파이 배열로 변환
+            downsampled_time_series = np.stack(downsampled_time_series)
+            self.dataset_list_train[key] = downsampled_time_series
+        targets = np.stack(targets)
+        self.dataset_list_train['target'] = targets
+
+        
+        for key in self.feature_keys:
+            tp = self.dataset_list_test[key]
+            downsampled_time_series = []
+            # 각 시계열에서 다운샘플링 진행
+            for i in range(tp.shape[0]):  # 시계열 개수에 대해 루프를 돕니다.
+                downsampled_segment = np.mean(tp[i].reshape(-1, downsample_factor), axis=1)
+                downsampled_time_series.append(downsampled_segment)
+
+            # 리스트를 넘파이 배열로 변환
+            downsampled_time_series = np.stack(downsampled_time_series)
+            self.dataset_list_test[key] = downsampled_time_series
+
+        for key in self.feature_keys:
+            tp = self.dataset_list_val[key]
+            downsampled_time_series = []
+            # 각 시계열에서 다운샘플링 진행
+            for i in range(tp.shape[0]):  # 시계열 개수에 대해 루프를 돕니다.
+                downsampled_segment = np.mean(tp[i].reshape(-1, downsample_factor), axis=1)
+                downsampled_time_series.append(downsampled_segment)
+
+            # 리스트를 넘파이 배열로 변환
+            downsampled_time_series = np.stack(downsampled_time_series)
+            self.dataset_list_val[key] = downsampled_time_series
+
+
+    def __getitem__(self, index):
+        if self.mode == "train":
+            for idx, feature in enumerate(self.feature_keys):
+                if idx == 0:
+                    data_ = self.transform_train[feature](np.expand_dims(self.dataset_list_train[feature][index,:], axis=0))
+                else:
+                    data_ = torch.cat([data_,
+                                        self.transform_train[feature](np.expand_dims(self.dataset_list_train[feature][index,:], axis=0))], dim=0) 
+            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_train['target'][index]))
+        elif (self.mode == 'val'):
+            for idx, feature in enumerate(self.feature_keys):
+                if idx == 0:
+                    data_ = self.transform_val[feature](np.expand_dims(self.dataset_list_val[feature][index,:], axis=0))
+                else:
+                    data_ = torch.cat([data_,
+                                        self.transform_val[feature](np.expand_dims(self.dataset_list_val[feature][index,:], axis=0))], dim=0) 
+            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_val['target'][index]))
+        elif (self.mode == 'test'):
+            for idx, feature in enumerate(self.feature_keys):
+                if idx == 0:
+                    data_ = self.transform_test[feature](np.expand_dims(self.dataset_list_test[feature][index,:], axis=0))
+                else:
+                    data_ = torch.cat([data_,
+                                        self.transform_test[feature](np.expand_dims(self.dataset_list_test[feature][index,:], axis=0))], dim=0) 
+            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_test['target'][index]))
+        else:
+            for idx, feature in enumerate(self.feature_keys):
+                if idx == 0:
+                    data_ = self.transform_test[feature](np.expand_dims(self.dataset_list_test[feature][index,:], axis=0))
+                else:
+                    data_ = torch.cat([data_,
+                                        self.transform_test[feature](np.expand_dims(self.dataset_list_test[feature][index,:], axis=0))], dim=0) 
+            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_test['target'][index]))
+
+
+    def __len__(self):
+        if self.mode == "train":
+            return len(self.dataset_list_train['target'])
+        elif (self.mode == 'val'):
+            return len(self.dataset_list_val['target'])
+        elif (self.mode == 'test'):
+            return len(self.dataset_list_test['target'])
+        else:
+            return len(self.dataset_list_test['target'])
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
 
 
 
