@@ -5,6 +5,7 @@ import torch.nn as nn
 import time
 from util.time import *
 from util.env import *
+from sklearn.metrics import confusion_matrix, accuracy_score, roc_auc_score
 
 import argparse
 import matplotlib.pyplot as plt
@@ -18,7 +19,7 @@ from util.preprocess import *
 
 
 
-def test(model, dataloader):
+def test(model, dataloader, vital):
     # test
     loss_func = nn.MSELoss(reduction='mean')
     device = get_device()
@@ -40,12 +41,17 @@ def test(model, dataloader):
 
     i = 0
     acu_loss = 0
+    target_stack = []
+    output_stack = []
     for x, y, labels, edge_index in dataloader:
         x, y, labels, edge_index = [item.to(device).float() for item in [x, y, labels, edge_index]]
-        
         with torch.no_grad():
-            predicted = model(x, edge_index).float().to(device)
-            
+            if vital == 0:
+                predicted = model(x, edge_index).float().to(device)
+            else:
+                predicted, cls = model(x, edge_index)
+                target_stack.extend ( np.array ( labels.cpu() ) )
+                output_stack.extend ( np.array ( cls.cpu().detach()) )
             
             loss = loss_func(predicted, y)
             
@@ -69,6 +75,9 @@ def test(model, dataloader):
         if i % 10000 == 1 and i > 1:
             print(timeSincePlus(now, i / test_len))
 
+    if vital == 1:
+        auc = roc_auc_score( target_stack, output_stack )
+        print("auc: {}".format(auc))
 
     test_predicted_list = t_test_predicted_list.tolist()        
     test_ground_list = t_test_ground_list.tolist()        

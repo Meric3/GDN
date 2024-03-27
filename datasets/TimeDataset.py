@@ -4,6 +4,8 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import numpy as np
+from util.preprocess import build_loc_net, construct_data
+from util.net_struct import get_feature_map, get_fc_graph_struc
 
 
 class TimeDataset(Dataset):
@@ -74,20 +76,40 @@ class TimeDataset(Dataset):
     
 
 class Dataset_vitaldb(Dataset):
-    def __init__(self, data_path, win_size, step, mode="train"):
+    def __init__(self,mode="train", **kwargs):
         # 여기서 엣지 만들고 
         # 데이터 만들기
             # 레이블 어떻게 줄지 생각해야함 
         self.mode = mode
-        self.step = step
-        self.win_size = win_size
-        self.data_path = data_path
+        self.step = 1
+        self.win_size = 10
+        # self.data_path = data_path
+        # get_fc_graph_struc
+        struc_map = {}
+        feature_map = [str(i) for i in range(4)]
+        # feature_list = []
+        feature_list = feature_map.copy()
+
+        for ft in feature_list:
+            if ft not in struc_map:
+                struc_map[ft] = []
+
+            for other_ft in feature_list:
+                if other_ft is not ft:
+                    struc_map[ft].append(other_ft)
+        fc_struc = struc_map
+
+        self.edge_index = build_loc_net(fc_struc, feature_map, feature_map)
+        self.edge_index = torch.tensor(self.edge_index, dtype = torch.long)
+
+
         self.__read_data__()
 
     def __read_data__(self):
         import sys
         import yaml
         from random import randint
+        import pandas as pd
         sys.path.append('/home/mjh319/workspace/3_hypotension_detection/3_hypo')
         sys.path.append('/home/mjh319/workspace/3_hypotension_detection/3_hypo/models')
         from datasets.dataset import Make_hypo_dataset
@@ -119,24 +141,26 @@ class Dataset_vitaldb(Dataset):
         
 
         for key in self.feature_keys:
+            # print(key)
             tp = self.dataset_list_train[key]
             downsampled_time_series = []
             targets = [] 
             # 각 시계열에서 다운샘플링 진행
             for i in range(tp.shape[0]):  # 시계열 개수에 대해 루프를 돕니다.
                 downsampled_segment = np.mean(tp[i].reshape(-1, downsample_factor), axis=1)
-                if self.dataset_list_train['target'][i] == 0:
-                    downsampled_time_series.append(downsampled_segment)
-                    targets.append(self.dataset_list_train['target'][i] )
+                # if self.dataset_list_train['target'][i] == 0:
+                downsampled_time_series.append(downsampled_segment)
+                    # targets.append(self.dataset_list_train['target'][i] )
 
             # 리스트를 넘파이 배열로 변환
             downsampled_time_series = np.stack(downsampled_time_series)
             self.dataset_list_train[key] = downsampled_time_series
-        targets = np.stack(targets)
-        self.dataset_list_train['target'] = targets
+        # targets = np.stack(targets)
+        # self.dataset_list_train['target'] = targets
 
         
         for key in self.feature_keys:
+            # print(key)
             tp = self.dataset_list_test[key]
             downsampled_time_series = []
             # 각 시계열에서 다운샘플링 진행
@@ -162,6 +186,7 @@ class Dataset_vitaldb(Dataset):
 
 
     def __getitem__(self, index):
+        edge_index = self.edge_index.long()
         if self.mode == "train":
             for idx, feature in enumerate(self.feature_keys):
                 if idx == 0:
@@ -169,7 +194,11 @@ class Dataset_vitaldb(Dataset):
                 else:
                     data_ = torch.cat([data_,
                                         self.transform_train[feature](np.expand_dims(self.dataset_list_train[feature][index,:], axis=0))], dim=0) 
-            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_train['target'][index]))
+            return data_.squeeze().double(),\
+                    data_.squeeze().double()[:,-1],\
+                  torch.tensor(self.dataset_list_train['target'][index]),\
+                  edge_index
+                  
         elif (self.mode == 'val'):
             for idx, feature in enumerate(self.feature_keys):
                 if idx == 0:
@@ -177,7 +206,10 @@ class Dataset_vitaldb(Dataset):
                 else:
                     data_ = torch.cat([data_,
                                         self.transform_val[feature](np.expand_dims(self.dataset_list_val[feature][index,:], axis=0))], dim=0) 
-            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_val['target'][index]))
+            return data_.squeeze().double(),\
+                    data_.squeeze().double()[:,-1],\
+                  torch.tensor(self.dataset_list_val['target'][index]),\
+                  edge_index
         elif (self.mode == 'test'):
             for idx, feature in enumerate(self.feature_keys):
                 if idx == 0:
@@ -185,7 +217,10 @@ class Dataset_vitaldb(Dataset):
                 else:
                     data_ = torch.cat([data_,
                                         self.transform_test[feature](np.expand_dims(self.dataset_list_test[feature][index,:], axis=0))], dim=0) 
-            return np.array(data_.squeeze().transpose(1,0).to(torch.float32)), np.array(np.float32(self.dataset_list_test['target'][index]))
+            return data_.squeeze().double(),\
+                    data_.squeeze().double()[:,-1],\
+                  torch.tensor(self.dataset_list_test['target'][index]),\
+                  edge_index
         else:
             for idx, feature in enumerate(self.feature_keys):
                 if idx == 0:

@@ -12,7 +12,7 @@ from util.preprocess import build_loc_net, construct_data
 from util.net_struct import get_feature_map, get_fc_graph_struc
 from util.iostream import printsep
 
-from datasets.TimeDataset import TimeDataset
+from datasets.TimeDataset import TimeDataset, Dataset_vitaldb
 
 
 from models.GDN import GDN
@@ -69,10 +69,13 @@ class Main():
             'slide_stride': train_config['slide_stride'],
         }
 
-        train_dataset = TimeDataset(train_dataset_indata, fc_edge_index, mode='train', config=cfg)
-        test_dataset = TimeDataset(test_dataset_indata, fc_edge_index, mode='test', config=cfg)
-
-
+        if train_config['vital'] != 1:
+            train_dataset = TimeDataset(train_dataset_indata, fc_edge_index, mode='train', config=cfg)
+            test_dataset = TimeDataset(test_dataset_indata, fc_edge_index, mode='test', config=cfg)
+        else:
+            train_dataset = Dataset_vitaldb(mode='train')
+            test_dataset = Dataset_vitaldb(mode='test')
+ 
         train_dataloader, val_dataloader = self.get_loaders(train_dataset, train_config['seed'], train_config['batch'], val_ratio = train_config['val_ratio'])
 
         self.train_dataset = train_dataset
@@ -84,16 +87,35 @@ class Main():
         self.test_dataloader = DataLoader(test_dataset, batch_size=train_config['batch'],
                             shuffle=False, num_workers=0)
 
+        if train_config['vital'] != 1:
+            edge_index_sets = []
+            edge_index_sets.append(fc_edge_index)
+        else:
+            feature_map = [str(i) for i in range(4)]
+            feature_list = feature_map.copy()
+            struc_map = {}
+            for ft in feature_list:
+                if ft not in struc_map:
+                    struc_map[ft] = []
 
-        edge_index_sets = []
-        edge_index_sets.append(fc_edge_index)
+                for other_ft in feature_list:
+                    if other_ft is not ft:
+                        struc_map[ft].append(other_ft)
+            fc_struc = struc_map
+
+            fc_edge_index = build_loc_net(fc_struc, feature_map, feature_map)
+            fc_edge_index = torch.tensor(fc_edge_index, dtype = torch.long)
+            edge_index_sets = []
+            edge_index_sets.append(fc_edge_index)
+
 
         self.model = GDN(edge_index_sets, len(feature_map), 
                 dim=train_config['dim'], 
                 input_dim=train_config['slide_win'],
                 out_layer_num=train_config['out_layer_num'],
                 out_layer_inter_dim=train_config['out_layer_inter_dim'],
-                topk=train_config['topk']
+                topk=train_config['topk'],
+                vital = train_config['vital']
             ).to(self.device)
 
 
@@ -116,12 +138,12 @@ class Main():
                 dataset_name=self.env_config['dataset']
             )
         
-        # test            
+        
         self.model.load_state_dict(torch.load(model_save_path))
         best_model = self.model.to(self.device)
 
-        _, self.test_result = test(best_model, self.test_dataloader)
-        _, self.val_result = test(best_model, self.val_dataloader)
+        _, self.test_result = test(best_model, self.test_dataloader, self.train_config['vital'])
+        _, self.val_result = test(best_model, self.val_dataloader, self.train_config['vital'])
 
         self.get_score(self.test_result, self.val_result)
 
@@ -216,6 +238,8 @@ if __name__ == "__main__":
     parser.add_argument('-report', help='best / val', type = str, default='best')
     parser.add_argument('-load_model_path', help='trained model path', type = str, default='')
 
+    parser.add_argument('-vital', type = int, default=0)
+
     args = parser.parse_args()
 
     random.seed(args.random_seed)
@@ -241,6 +265,7 @@ if __name__ == "__main__":
         'decay': args.decay,
         'val_ratio': args.val_ratio,
         'topk': args.topk,
+        'vital': args.vital
     }
 
     env_config={
@@ -248,7 +273,8 @@ if __name__ == "__main__":
         'dataset': args.dataset,
         'report': args.report,
         'device': args.device,
-        'load_model_path': args.load_model_path
+        'load_model_path': args.load_model_path,
+        'vital': args.vital
     }
     
 

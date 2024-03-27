@@ -27,6 +27,8 @@ def loss_func(y_pred, y_true):
 def train(model = None, save_path = '', config={},  train_dataloader=None, val_dataloader=None, feature_map={}, test_dataloader=None, test_dataset=None, dataset_name='swat', train_dataset=None):
 
     seed = config['seed']
+    vital =  config['vital']
+    vital_loss = nn.BCELoss()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=config['decay'])
 
@@ -66,8 +68,19 @@ def train(model = None, save_path = '', config={},  train_dataloader=None, val_d
             x, labels, edge_index = [item.float().to(device) for item in [x, labels, edge_index]]
 
             optimizer.zero_grad()
-            out = model(x, edge_index).float().to(device)
-            loss = loss_func(out, labels)
+            if vital == 0:
+                out = model(x, edge_index).float().to(device)
+                loss = loss_func(out, labels)
+                cls_los = 0
+            else:
+                out, cls = model(x, edge_index)
+                out, cls = out.float().to(device), cls.double().to(device)
+
+                vt_loss = vital_loss(cls, attack_labels.double().to(device))
+                los = loss_func(out, labels)
+                cls_los = los.item()
+                loss = los + vt_loss
+            
             
             loss.backward()
             optimizer.step()
@@ -80,15 +93,15 @@ def train(model = None, save_path = '', config={},  train_dataloader=None, val_d
 
 
         # each epoch
-        print('epoch ({} / {}) (Loss:{:.8f}, ACU_loss:{:.8f})'.format(
+        print('epoch ({} / {}) (Loss:{:.8f}, ACU_loss:{:.8f}, cls:{:.2f})'.format(
                         i_epoch, epoch, 
-                        acu_loss/len(dataloader), acu_loss), flush=True
+                        acu_loss/len(dataloader), acu_loss,cls_los), flush=True
             )
 
         # use val dataset to judge
         if val_dataloader is not None:
 
-            val_loss, val_result = test(model, val_dataloader)
+            val_loss, val_result = test(model, val_dataloader, vital)
 
             if val_loss < min_loss:
                 torch.save(model.state_dict(), save_path)

@@ -80,9 +80,11 @@ class GNNLayer(nn.Module):
 
 
 class GDN(nn.Module):
-    def __init__(self, edge_index_sets, node_num, dim=64, out_layer_inter_dim=256, input_dim=10, out_layer_num=1, topk=20):
+    def __init__(self, edge_index_sets, node_num, dim=64, out_layer_inter_dim=256, input_dim=10, out_layer_num=1, topk=20,
+                 vital=0):
 
         super(GDN, self).__init__()
+        self.vital = vital
 
         self.edge_index_sets = edge_index_sets
 
@@ -112,6 +114,8 @@ class GDN(nn.Module):
         self.cache_embed_index = None
 
         self.dp = nn.Dropout(0.2)
+        self.linear = nn.Linear(4, 2)
+        self.last = nn.Sigmoid()
 
         self.init_params()
     
@@ -183,6 +187,10 @@ class GDN(nn.Module):
         out = self.out_layer(out)
         out = out.view(-1, node_num)
    
+        if self.vital == 1:
+            class_ = self.last(self.linear(out)).T[0]
+            return out, class_
+
 
         return out
         
